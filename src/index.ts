@@ -6,6 +6,23 @@ type Bindings = {
   STX_ADDRESS: string
 }
 
+// Payment config - sBTC only
+const PAYMENT_ADDRESS = 'SPKH9AWG0ENZ87J1X0PBD4HETP22G8W22AFNVF8K'
+const SBTC_CONTRACT = {
+  address: 'SP3K8BC0PPEVCV7NZ6QSRWPQ2JE9E5B6N3PA0KBR9',
+  name: 'token-sbtc',
+}
+const ROAST_COST_SATS = 500 // 500 sats (~$0.50) per roast
+
+type PaymentTokenType = 'STX' | 'sBTC'
+
+function getPaymentTokenType(req: any): PaymentTokenType {
+  const queryToken = new URL(req.url).searchParams.get('tokenType')
+  const headerToken = req.headers.get('X-PAYMENT-TOKEN-TYPE')
+  const tokenStr = (headerToken || queryToken || 'STX').toUpperCase()
+  return tokenStr === 'SBTC' ? 'sBTC' : 'STX'
+}
+
 const app = new Hono<{ Bindings: Bindings }>()
 
 app.use('*', cors())
@@ -184,7 +201,7 @@ app.get('/', (c) => {
       <input type="text" id="wallet" placeholder="SP... or SM... address" />
       <button id="roastBtn" onclick="roastMe()">ROAST ME</button>
     </div>
-    <p class="price">⚡ 1000 microSTX (~$0.001) per roast</p>
+    <p class="price">⚡ Pay 0.001 STX or 1 sat (sBTC) per roast</p>
 
     <div class="loading" id="loading">
       <p class="loading-text">🔥 Analyzing your terrible decisions...</p>
@@ -318,7 +335,7 @@ function generateFallbackRoast(stxBalance: string, tokenCount: number, nftCount:
   return shuffled.slice(0, Math.min(4, shuffled.length)).join("\n\n")
 }
 
-// Roast endpoint
+// Roast endpoint (x402 gated - accepts STX or sBTC)
 app.get('/roast/:address', async (c) => {
   const address = c.req.param('address')
 
@@ -327,6 +344,58 @@ app.get('/roast/:address', async (c) => {
     return c.json({ error: 'Invalid Stacks address format' }, 400)
   }
 
+  // Check for x402 payment
+  const paymentHeader = c.req.header('X-Payment')
+  const tokenType = getPaymentTokenType(c.req.raw)
+
+  // If no payment, return 402 Payment Required
+  if (!paymentHeader) {
+    const nonce = crypto.randomUUID()
+    const paymentAmount = tokenType === 'sBTC' ? ROAST_COST_SATS : ROAST_COST_MICROSTX
+
+    const paymentRequest: any = {
+      maxAmountRequired: paymentAmount.toString(),
+      resource: `/roast/${address}`,
+      payTo: PAYMENT_ADDRESS,
+      network: 'mainnet',
+      nonce,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      tokenType,
+      description: 'Get your wallet roasted by AI',
+    }
+
+    // Add token contract for sBTC
+    if (tokenType === 'sBTC') {
+      paymentRequest.tokenContract = {
+        address: 'SP3K8BC0PPEVCV7NZ6QSRWPQ2JE9E5B6N3PA0KBR9',
+        name: 'token-sbtc',
+      }
+    }
+
+    return c.json(paymentRequest, 402)
+  }
+
+  // Verify payment by broadcasting to network
+  try {
+    const txBytes = new Uint8Array(paymentHeader.match(/.{1,2}/g)!.map((byte: string) => parseInt(byte, 16)))
+    const txRes = await fetch('https://api.hiro.so/v2/transactions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: txBytes,
+    })
+
+    if (!txRes.ok) {
+      const err = await txRes.text()
+      // Allow if already in mempool
+      if (!err.includes('ConflictingNonceInMempool') && !err.includes('already')) {
+        return c.json({ error: 'Payment failed', details: err }, 402)
+      }
+    }
+  } catch (payErr: any) {
+    return c.json({ error: 'Payment verification failed', details: payErr.message }, 402)
+  }
+
+  // Payment accepted - now fetch wallet data and generate roast
   try {
     // Fetch wallet data from Hiro API
     const [balanceRes, holdingsRes] = await Promise.all([
