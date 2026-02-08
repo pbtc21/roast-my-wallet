@@ -13,6 +13,7 @@ const SBTC_CONTRACT = {
   name: 'token-sbtc',
 }
 const ROAST_COST_SATS = 500 // 500 sats (~$0.50) per roast
+const ROAST_COST_MICROSTX = 1000 // 0.001 STX per roast
 
 type PaymentTokenType = 'STX' | 'sBTC'
 
@@ -483,6 +484,97 @@ Generate a brutal roast:`
     console.error('Roast error:', error)
     return c.json({ error: 'Failed to analyze wallet' }, 500)
   }
+})
+
+// x402 Discovery endpoint
+app.get('/.well-known/x402', (c) => {
+  return c.json({
+    x402Version: 1,
+    name: 'Roast My Wallet',
+    accepts: [
+      {
+        scheme: 'exact',
+        network: 'stacks',
+        maxAmountRequired: ROAST_COST_MICROSTX.toString(),
+        resource: '/roast/:address',
+        description: 'AI-powered wallet roasting - get brutally roasted based on your crypto portfolio',
+        mimeType: 'application/json',
+        payTo: PAYMENT_ADDRESS,
+        maxTimeoutSeconds: 300,
+        asset: 'STX',
+        outputSchema: {
+          input: {
+            type: 'object',
+            properties: {
+              address: {
+                type: 'string',
+                description: 'Stacks wallet address (SP... or SM...)',
+                pattern: '^(SP|SM)[A-Z0-9]{38,40}$'
+              }
+            },
+            required: ['address']
+          },
+          output: {
+            type: 'object',
+            properties: {
+              address: { type: 'string' },
+              stats: {
+                type: 'object',
+                properties: {
+                  stxBalance: { type: 'string' },
+                  tokenCount: { type: 'number' },
+                  nftCount: { type: 'number' },
+                  riskLevel: { type: 'string', enum: ['CONSERVATIVE', 'MODERATE', 'RISKY', 'DEGEN'] }
+                }
+              },
+              roast: { type: 'string' }
+            }
+          }
+        }
+      },
+      {
+        scheme: 'exact',
+        network: 'stacks',
+        maxAmountRequired: ROAST_COST_SATS.toString(),
+        resource: '/roast/:address',
+        description: 'AI-powered wallet roasting - get brutally roasted based on your crypto portfolio (pay with sBTC)',
+        mimeType: 'application/json',
+        payTo: PAYMENT_ADDRESS,
+        maxTimeoutSeconds: 300,
+        asset: 'sBTC',
+        tokenContract: SBTC_CONTRACT,
+        outputSchema: {
+          input: {
+            type: 'object',
+            properties: {
+              address: {
+                type: 'string',
+                description: 'Stacks wallet address (SP... or SM...)',
+                pattern: '^(SP|SM)[A-Z0-9]{38,40}$'
+              }
+            },
+            required: ['address']
+          },
+          output: {
+            type: 'object',
+            properties: {
+              address: { type: 'string' },
+              stats: {
+                type: 'object',
+                properties: {
+                  stxBalance: { type: 'string' },
+                  tokenCount: { type: 'number' },
+                  nftCount: { type: 'number' },
+                  riskLevel: { type: 'string', enum: ['CONSERVATIVE', 'MODERATE', 'RISKY', 'DEGEN'] }
+                }
+              },
+              roast: { type: 'string' }
+            }
+          }
+        }
+      }
+    ]
+  })
 })
 
 // Health check
